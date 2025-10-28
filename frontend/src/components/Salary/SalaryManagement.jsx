@@ -4,7 +4,8 @@ import './SalaryManagement.css';
 
 const SalaryManagement = () => {
   const [employees, setEmployees] = useState([]);
-  const [salaries, setSalaries] = useState([]);
+  const [activeSalaries, setActiveSalaries] = useState([]);
+  const [disabledSalaries, setDisabledSalaries] = useState([]);
   const [selectedEmployee, setSelectedEmployee] = useState('');
   const [employeeDetails, setEmployeeDetails] = useState(null);
   const [showSalaryForm, setShowSalaryForm] = useState(false);
@@ -19,6 +20,8 @@ const SalaryManagement = () => {
   const [showSalaryDetail, setShowSalaryDetail] = useState(false);
   const [hikePercentage, setHikePercentage] = useState('');
   const [showHikeForm, setShowHikeForm] = useState(false);
+  const [showDisabledRecords, setShowDisabledRecords] = useState(false);
+  const [hikeStartDate, setHikeStartDate] = useState('');
 
   // Get current month and year
   const currentDate = new Date();
@@ -29,7 +32,7 @@ const SalaryManagement = () => {
     employeeId: '',
     month: currentMonth,
     year: currentYear,
-    basicSalary: '',
+    monthlyCtc: '',
     paidDays: 0,
     lopDays: 0,
     remainingLeaves: 0,
@@ -41,14 +44,15 @@ const SalaryManagement = () => {
 
   useEffect(() => {
     loadEmployees();
-    loadSalaries();
+    loadActiveSalaries();
+    loadDisabledSalaries();
   }, []);
 
   useEffect(() => {
-    if (salaries.length > 0) {
+    if (activeSalaries.length > 0) {
       checkPayslipStatus();
     }
-  }, [salaries]);
+  }, [activeSalaries]);
 
   const loadEmployees = async () => {
     try {
@@ -59,22 +63,35 @@ const SalaryManagement = () => {
     }
   };
 
-  const loadSalaries = async () => {
+  const loadActiveSalaries = async () => {
     setLoading(true);
     try {
       const data = await salaryService.getSalaries();
-      setSalaries(data.salaries);
+      // Filter only active salaries (activeStatus = 'enabled')
+      const enabledSalaries = data.salaries.filter(salary => salary.activeStatus === 'enabled');
+      setActiveSalaries(enabledSalaries);
     } catch (error) {
-      console.error('Error loading salaries:', error);
+      console.error('Error loading active salaries:', error);
     } finally {
       setLoading(false);
     }
   };
 
+const loadDisabledSalaries = async () => {
+  try {
+    const data = await salaryService.getDisabledSalaries();
+    // The data should now have a 'salaries' property
+    const disabledSalaries = data.salaries || [];
+    setDisabledSalaries(disabledSalaries);
+  } catch (error) {
+    console.error('Error loading disabled salaries:', error);
+    setDisabledSalaries([]); // Set to empty array on error
+  }
+};
   const checkPayslipStatus = async () => {
     const status = {};
     
-    for (const salary of salaries) {
+    for (const salary of activeSalaries) {
       try {
         const payslipsData = await salaryService.getEmployeePayslips(salary.employeeId);
         const hasPayslipForThisMonth = payslipsData.payslips.some(
@@ -99,7 +116,7 @@ const SalaryManagement = () => {
 
   const updatePayslipStatusAfterDelete = async (employeeId, month, year) => {
     try {
-      const salaryRecord = salaries.find(
+      const salaryRecord = activeSalaries.find(
         salary => 
           salary.employeeId === employeeId && 
           salary.month === month && 
@@ -120,7 +137,20 @@ const SalaryManagement = () => {
     }
   };
 
-  const filterSalaries = salaries.filter(salary => {
+  // Filter salaries based on search term
+  const filterActiveSalaries = activeSalaries.filter(salary => {
+    if (!searchTerm) return true;
+    
+    const searchLower = searchTerm.toLowerCase();
+    return (
+      (salary.employeeId && salary.employeeId.toLowerCase().includes(searchLower)) ||
+      (salary.name && salary.name.toLowerCase().includes(searchLower)) ||
+      (salary.month && salary.month.toLowerCase().includes(searchLower)) ||
+      (salary.year && salary.year.toString().includes(searchTerm))
+    );
+  });
+
+  const filterDisabledSalaries = disabledSalaries.filter(salary => {
     if (!searchTerm) return true;
     
     const searchLower = searchTerm.toLowerCase();
@@ -163,6 +193,7 @@ const SalaryManagement = () => {
     setSelectedSalaryDetail(salary);
     setShowHikeForm(true);
     setHikePercentage('');
+    setHikeStartDate('');
   };
 
   const applyHike = async () => {
@@ -171,42 +202,41 @@ const SalaryManagement = () => {
       return;
     }
 
-    try {
-      const hikeAmount = (selectedSalaryDetail.basicSalary * hikePercentage) / 100;
-      const newBasicSalary = selectedSalaryDetail.basicSalary + hikeAmount;
+    if (!hikeStartDate) {
+      alert('Please select a start date for the hike');
+      return;
+    }
 
-      const updatedSalary = {
-        ...selectedSalaryDetail,
-        basicSalary: newBasicSalary,
-        earnings: selectedSalaryDetail.earnings.map(earning => ({
-          ...earning,
-          amount: earning.type === 'Hike' ? hikeAmount : earning.amount
-        }))
+    try {
+      const hikeData = {
+        startDate: hikeStartDate,
+        hikePercent: parseFloat(hikePercentage),
       };
 
-      // Check if there's already a hike earning, if not add one
-      const hasHikeEarning = updatedSalary.earnings.some(earning => earning.type === 'Hike');
-      if (!hasHikeEarning) {
-        updatedSalary.earnings.push({
-          type: 'Hike',
-          amount: hikeAmount
-        });
-      }
+      await salaryService.applyHike(selectedSalaryDetail._id, hikeData);
 
-      await salaryService.updateSalary(selectedSalaryDetail._id, updatedSalary);
-      alert(`Hike of ${hikePercentage}% applied successfully! New basic salary: Rs.${newBasicSalary.toFixed(2)}`);
+      alert(
+        `Hike of ${hikePercentage}% scheduled successfully! It will be effective from ${new Date(
+          hikeStartDate
+        ).toLocaleDateString()}`
+      );
+
       setShowHikeForm(false);
       setHikePercentage('');
+      setHikeStartDate('');
       setShowSalaryDetail(false);
-      loadSalaries();
+
+      // Refresh both active and disabled salary lists
+      loadActiveSalaries();
+      loadDisabledSalaries();
     } catch (error) {
-      alert('Error applying hike');
+      alert(error.response?.data?.message || 'Error applying hike');
       console.error('Error applying hike:', error);
     }
   };
 
   const checkDuplicateSalary = (employeeId, month, year, excludeSalaryId = null) => {
-    return salaries.some(salary =>
+    return activeSalaries.some(salary =>
       salary.employeeId === employeeId &&
       salary.month === month &&
       salary.year === year &&
@@ -295,7 +325,7 @@ const SalaryManagement = () => {
       
       setShowSalaryForm(false);
       resetForm();
-      loadSalaries();
+      loadActiveSalaries();
     } catch (error) {
       alert(error.response?.data?.message || `Error ${editingSalary ? 'updating' : 'creating'} salary record`);
     } finally {
@@ -308,7 +338,7 @@ const SalaryManagement = () => {
       employeeId: '',
       month: currentMonth,
       year: currentYear,
-      basicSalary: '',
+      monthlyCtc: '',
       paidDays: 0,
       lopDays: 0,
       remainingLeaves: 0,
@@ -331,7 +361,7 @@ const SalaryManagement = () => {
         employeeId: salaryDetails.employeeId,
         month: salaryDetails.month,
         year: salaryDetails.year,
-        basicSalary: salaryDetails.basicSalary,
+        monthlyCtc: salaryDetails.monthlyCtc,
         paidDays: salaryDetails.paidDays,
         lopDays: salaryDetails.lopDays,
         remainingLeaves: salaryDetails.remainingLeaves,
@@ -357,7 +387,8 @@ const SalaryManagement = () => {
     if (window.confirm('Are you sure you want to delete this salary record?')) {
       try {
         await salaryService.deleteSalary(salaryId);
-        loadSalaries();
+        loadActiveSalaries();
+        loadDisabledSalaries();
       } catch (error) {
         alert('Error deleting salary record');
       }
@@ -390,6 +421,12 @@ const SalaryManagement = () => {
   };
 
   const handleGeneratePayslip = async (salaryId) => {
+    // Only allow generating payslips for active salary records
+    const salary = activeSalaries.find(s => s._id === salaryId);
+    if (salary && salary.activeStatus !== 'enabled') {
+      alert('Cannot generate payslip for disabled salary records');
+      return;
+    }
     try {
       await salaryService.generatePayslip(salaryId);
       alert('Payslip generated and sent to employee email!');
@@ -402,7 +439,7 @@ const SalaryManagement = () => {
         }
       }));
 
-      loadSalaries();
+      loadActiveSalaries();
     } catch (error) {
       alert(error.response?.data?.message || 'Error generating payslip');
     }
@@ -440,6 +477,10 @@ const SalaryManagement = () => {
     setShowSalaryForm(true);
   };
 
+  const toggleDisabledRecords = () => {
+    setShowDisabledRecords(!showDisabledRecords);
+  };
+
   const months = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
@@ -448,38 +489,43 @@ const SalaryManagement = () => {
   // Fixed salary summary calculations
   const totalEarnings = formData.earnings.reduce((sum, earning) => sum + (parseFloat(earning.amount) || 0), 0);
   const totalDeductions = formData.deductions.reduce((sum, deduction) => sum + (parseFloat(deduction.amount) || 0), 0);
-  const basicSalary = parseFloat(formData.basicSalary) || 0;
-  const grossEarnings = basicSalary + totalEarnings;
+  const monthlyCtc = parseFloat(formData.monthlyCtc) || 0;
+  const grossEarnings = monthlyCtc + totalEarnings;
   const netPay = grossEarnings - totalDeductions;
 
   // Calculate totals for selected salary detail
   const selectedTotalEarnings = selectedSalaryDetail ? selectedSalaryDetail.earnings.reduce((sum, earning) => sum + (parseFloat(earning.amount) || 0), 0) : 0;
   const selectedTotalDeductions = selectedSalaryDetail ? selectedSalaryDetail.deductions.reduce((sum, deduction) => sum + (parseFloat(deduction.amount) || 0), 0) : 0;
-  const selectedGrossEarnings = selectedSalaryDetail ? (selectedSalaryDetail.basicSalary + selectedTotalEarnings) : 0;
+  const selectedGrossEarnings = selectedSalaryDetail ? (selectedSalaryDetail.monthlyCtc + selectedTotalEarnings) : 0;
   const selectedNetPay = selectedSalaryDetail ? (selectedGrossEarnings - selectedTotalDeductions) : 0;
+
+  // Get displayed salaries based on current view
+  const displayedSalaries = showDisabledRecords ? filterDisabledSalaries : filterActiveSalaries;
 
   return (
     <div className="salary-management">
       {/* Header with Stats */}
       <div className="salary-header">
-        <div className="header-title">
-          <div className="header-stats">
-            <div className="stat-card">
-              <div className="stat-value">{salaries.length}</div>
-              <div className="stat-label">Total Records</div>
+        <div className="header-stats">
+          <div className="stat-card">
+            <div className="stat-value">{activeSalaries.length}</div>
+            <div className="stat-label">Active Records</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-value">
+              {activeSalaries.filter(s => s.status === 'paid').length}
             </div>
-            <div className="stat-card">
-              <div className="stat-value">
-                {salaries.filter(s => s.status === 'paid').length}
-              </div>
-              <div className="stat-label">Paid Salaries</div>
+            <div className="stat-label">Paid Salaries</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-value">
+              {activeSalaries.filter(s => s.status === 'draft').length}
             </div>
-            <div className="stat-card">
-              <div className="stat-value">
-                {salaries.filter(s => s.status === 'draft').length}
-              </div>
-              <div className="stat-label">Draft Records</div>
-            </div>
+            <div className="stat-label">Draft Records</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-value">{disabledSalaries.length}</div>
+            <div className="stat-label">Disabled Records</div>
           </div>
         </div>
       </div>
@@ -494,10 +540,18 @@ const SalaryManagement = () => {
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-        <button className="add-salary-btn" onClick={openAddForm}>
-          <span>+</span>
-          Add Salary Record
-        </button>
+        <div className="controls-buttons">
+          <button 
+            className={`toggle-records-btn ${showDisabledRecords ? 'active' : ''}`}
+            onClick={toggleDisabledRecords}
+          >
+            {showDisabledRecords ? 'Show Active Records' : 'Show Disabled Records'}
+          </button>
+          <button className="add-salary-btn" onClick={openAddForm}>
+            <span>+</span>
+            Add Salary Record
+          </button>
+        </div>
       </div>
 
       {/* Salary Table */}
@@ -508,11 +562,11 @@ const SalaryManagement = () => {
               <div key={i} className="table-row loading-shimmer" style={{height: '60px'}}></div>
             ))}
           </div>
-        ) : filterSalaries.length === 0 ? (
+        ) : displayedSalaries.length === 0 ? (
           <div className="no-records">
             <div style={{textAlign: 'center', padding: '40px', color: '#6b7280'}}>
-              <h3>No salary records found</h3>
-              <p>{searchTerm ? 'Try adjusting your search terms' : 'Start by adding your first salary record'}</p>
+              <h3>No {showDisabledRecords ? 'disabled' : 'active'} salary records found</h3>
+              <p>{searchTerm ? 'Try adjusting your search terms' : `No ${showDisabledRecords ? 'disabled' : 'active'} salary records available`}</p>
             </div>
           </div>
         ) : (
@@ -524,12 +578,18 @@ const SalaryManagement = () => {
                     <th>Employee</th>
                     <th>Month</th>
                     <th>Status</th>
+                    {showDisabledRecords && <th>Active Status</th>}
+                    {showDisabledRecords && <th>Hike Applied</th>}
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filterSalaries.map((salary) => (
-                    <tr key={salary._id} className="salary-table-row" onClick={() => handleSalaryDetail(salary)}>
+                  {displayedSalaries.map((salary) => (
+                    <tr 
+                      key={salary._id} 
+                      className={`salary-table-row ${showDisabledRecords ? 'disabled-row' : ''}`}
+                      onClick={() => handleSalaryDetail(salary)}
+                    >
                       <td>
                         <div className="employee-cell">
                           <div className="employee-details">
@@ -549,42 +609,71 @@ const SalaryManagement = () => {
                           {salary.status}
                         </span>
                       </td>
+                      {showDisabledRecords && (
+                        <td>
+                          <span className={`status-badge ${salary.activeStatus === 'enabled' ? 'status-enabled' : 'status-disabled'}`}>
+                            {salary.activeStatus}
+                          </span>
+                        </td>
+                      )}
+                      {showDisabledRecords && (
+                        <td>
+                          {salary.hikeApplied ? `${salary.hikePercentage}%` : 'No'}
+                        </td>
+                      )}
                       <td>
-                        <div className="table-actions" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            className="action-btn primary"
-                            onClick={() => handleViewPayslips(salary.employeeId)}
-                            title="View Payslips"
-                          >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                              <circle cx="12" cy="12" r="3"></circle>
-                            </svg>
-                          </button>
-                          <button
-                            className={`action-btn ${payslipStatus[salary._id]?.hasPayslip ? 'success' : 'warning'}`}
-                            onClick={() => handleGeneratePayslip(salary._id)}
-                            disabled={payslipStatus[salary._id]?.hasPayslip}
-                            title={payslipStatus[salary._id]?.hasPayslip ? 'Paid' : 'Generate Payslip'}
-                          >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                              <polyline points="14 2 14 8 20 8"></polyline>
-                              <line x1="16" y1="13" x2="8" y2="13"></line>
-                              <line x1="16" y1="17" x2="8" y2="17"></line>
-                              <polyline points="10 9 9 9 8 9"></polyline>
-                            </svg>
-                          </button>
-                          <button
-                            className="action-btn"
-                            onClick={() => handleEditSalary(salary)}
-                            title="Edit Salary"
-                          >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                            </svg>
-                          </button>
+                        <div className={`table-actions ${showDisabledRecords ? 'limited-actions' : ''}`} onClick={(e) => e.stopPropagation()}>
+                          {!showDisabledRecords ? (
+                            // Active Records Actions
+                            <>
+                              <button
+                                className="action-btn primary"
+                                onClick={() => handleViewPayslips(salary.employeeId)}
+                                title="View Payslips"
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                  <circle cx="12" cy="12" r="3"></circle>
+                                </svg>
+                              </button>
+                              <button
+                                className={`action-btn ${payslipStatus[salary._id]?.hasPayslip ? 'success' : 'warning'}`}
+                                onClick={() => handleGeneratePayslip(salary._id)}
+                                disabled={payslipStatus[salary._id]?.hasPayslip}
+                                title={payslipStatus[salary._id]?.hasPayslip ? 'Paid' : 'Generate Payslip'}
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                  <polyline points="14 2 14 8 20 8"></polyline>
+                                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                                  <polyline points="10 9 9 9 8 9"></polyline>
+                                </svg>
+                              </button>
+                              <button
+                                className="action-btn"
+                                onClick={() => handleEditSalary(salary)}
+                                title="Edit Salary"
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                </svg>
+                              </button>
+                            </>
+                          ) : (
+                            // Disabled Records Actions - Limited actions
+                            <button
+                              className="action-btn"
+                              onClick={() => handleSalaryDetail(salary)}
+                              title="View Details"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                              </svg>
+                            </button>
+                          )}
                           <button
                             className="action-btn danger"
                             onClick={() => handleDeleteSalary(salary._id)}
@@ -641,6 +730,12 @@ const SalaryManagement = () => {
                         {selectedSalaryDetail.status}
                       </span>
                     </div>
+                    <div className="detail-item">
+                      <span className="detail-label">Active Status:</span>
+                      <span className={`status-badge ${selectedSalaryDetail.activeStatus === 'enabled' ? 'status-enabled' : 'status-disabled'}`}>
+                        {selectedSalaryDetail.activeStatus}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -650,33 +745,37 @@ const SalaryManagement = () => {
                   <div className="breakdown-grid">
                     <div className="breakdown-column">
                       <h5>Earnings</h5>
-                      <div className="breakdown-item">
-                        <span>Basic Salary:</span>
-                        <span>Rs.{selectedSalaryDetail.basicSalary?.toFixed(2)}</span>
-                      </div>
-                      {selectedSalaryDetail.earnings?.map((earning, index) => (
-                        <div key={index} className="breakdown-item">
-                          <span>{earning.type}:</span>
-                          <span>Rs.{earning.amount?.toFixed(2)}</span>
+                      <div className="breakdown-items">
+                        <div className="breakdown-item">
+                          <span>Monthly CTC:</span>
+                          <span className="currency">Rs.{selectedSalaryDetail.monthlyCtc?.toFixed(2)}</span>
                         </div>
-                      ))}
-                      <div className="breakdown-total">
-                        <span>Total Earnings:</span>
-                        <span>Rs.{selectedGrossEarnings.toFixed(2)}</span>
+                        {selectedSalaryDetail.earnings?.map((earning, index) => (
+                          <div key={index} className="breakdown-item">
+                            <span>{earning.type || 'Additional Earning'}:</span>
+                            <span className="currency">Rs.{earning.amount?.toFixed(2)}</span>
+                          </div>
+                        ))}
+                        <div className="breakdown-total">
+                          <span>Total Earnings:</span>
+                          <span className="currency">Rs.{selectedGrossEarnings.toFixed(2)}</span>
+                        </div>
                       </div>
                     </div>
                     
                     <div className="breakdown-column">
                       <h5>Deductions</h5>
-                      {selectedSalaryDetail.deductions?.map((deduction, index) => (
-                        <div key={index} className="breakdown-item">
-                          <span>{deduction.type}:</span>
-                          <span>Rs.{deduction.amount?.toFixed(2)}</span>
+                      <div className="breakdown-items">
+                        {selectedSalaryDetail.deductions?.map((deduction, index) => (
+                          <div key={index} className="breakdown-item">
+                            <span>{deduction.type || 'Deduction'}:</span>
+                            <span className="currency">Rs.{deduction.amount?.toFixed(2)}</span>
+                          </div>
+                        ))}
+                        <div className="breakdown-total">
+                          <span>Total Deductions:</span>
+                          <span className="currency">Rs.{selectedTotalDeductions.toFixed(2)}</span>
                         </div>
-                      ))}
-                      <div className="breakdown-total">
-                        <span>Total Deductions:</span>
-                        <span>Rs.{selectedTotalDeductions.toFixed(2)}</span>
                       </div>
                     </div>
                   </div>
@@ -684,8 +783,8 @@ const SalaryManagement = () => {
                   {/* Net Pay Summary */}
                   <div className="net-pay-summary">
                     <div className="net-pay-item">
-                      <span>Net Pay:</span>
-                      <span className="net-pay-amount">Rs.{selectedNetPay.toFixed(2)}</span>
+                      <span className="net-pay-label">Net Pay:</span>
+                      <span className="net-pay-amount currency currency-large">Rs.{selectedNetPay.toFixed(2)}</span>
                     </div>
                   </div>
                 </div>
@@ -715,18 +814,22 @@ const SalaryManagement = () => {
 
                 {/* Action Buttons */}
                 <div className="detail-actions">
-                  <button 
-                    className="action-btn primary"
-                    onClick={() => handleGiveHike(selectedSalaryDetail)}
-                  >
-                    Give Hike
-                  </button>
-                  <button 
-                    className="action-btn"
-                    onClick={() => handleEditSalary(selectedSalaryDetail)}
-                  >
-                    Edit Salary
-                  </button>
+                  {selectedSalaryDetail.activeStatus === 'enabled' && (
+                    <button 
+                      className="action-btn primary"
+                      onClick={() => handleGiveHike(selectedSalaryDetail)}
+                    >
+                      Add Hike
+                    </button>
+                  )}
+                  {/* {selectedSalaryDetail.activeStatus === 'enabled' && (
+                    <button 
+                      className="action-btn"
+                      onClick={() => handleEditSalary(selectedSalaryDetail)}
+                    >
+                      Edit Salary
+                    </button>
+                  )} */}
                   <button 
                     className="action-btn"
                     onClick={() => setShowSalaryDetail(false)}
@@ -745,7 +848,7 @@ const SalaryManagement = () => {
         <div className="modal-overlay" onClick={() => setShowHikeForm(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Give Hike - {selectedSalaryDetail.name}</h3>
+              <h3>Apply Hike - {selectedSalaryDetail.name}</h3>
               <button className="close-btn" onClick={() => setShowHikeForm(false)}>×</button>
             </div>
             <div className="modal-body">
@@ -755,12 +858,12 @@ const SalaryManagement = () => {
                   <input
                     type="text"
                     className="form-input"
-                    value={`Rs.${selectedSalaryDetail.basicSalary?.toFixed(2)}`}
+                    value={`Rs.${selectedSalaryDetail.monthlyCtc?.toFixed(2)}`}
                     disabled
                   />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Hike Percentage (%)</label>
+                  <label className="form-label">Hike Percentage (%) *</label>
                   <input
                     type="number"
                     className="form-input"
@@ -769,17 +872,33 @@ const SalaryManagement = () => {
                     placeholder="Enter hike percentage"
                     min="1"
                     max="100"
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Hike Start Date *</label>
+                  <input
+                    type="date"
+                    className="form-input"
+                    value={hikeStartDate}
+                    onChange={(e) => setHikeStartDate(e.target.value)}
+                    min={new Date().toISOString().split('T')[0]}
+                    required
                   />
                 </div>
                 {hikePercentage && (
                   <div className="hike-preview">
                     <div className="hike-calculation">
                       <span>Hike Amount:</span>
-                      <span>Rs.{(selectedSalaryDetail.basicSalary * hikePercentage / 100).toFixed(2)}</span>
+                      <span>Rs.{(selectedSalaryDetail.monthlyCtc * hikePercentage / 100).toFixed(2)}</span>
                     </div>
                     <div className="hike-calculation total">
                       <span>New Basic Salary:</span>
-                      <span>Rs.{(selectedSalaryDetail.basicSalary * (1 + hikePercentage / 100)).toFixed(2)}</span>
+                      <span>Rs.{(selectedSalaryDetail.monthlyCtc * (1 + hikePercentage / 100)).toFixed(2)}</span>
+                    </div>
+                    <div className="hike-note">
+                      <p><strong>Note:</strong> The new salary will be effective from {hikeStartDate ? new Date(hikeStartDate).toLocaleDateString() : 'selected date'}. 
+                      Current salary record will be disabled and moved to disabled records on that date.</p>
                     </div>
                   </div>
                 )}
@@ -795,7 +914,7 @@ const SalaryManagement = () => {
                     type="button" 
                     onClick={applyHike}
                     className="action-btn primary"
-                    disabled={!hikePercentage}
+                    disabled={!hikePercentage || !hikeStartDate}
                   >
                     Apply Hike
                   </button>
@@ -895,8 +1014,8 @@ const SalaryManagement = () => {
                         <input
                           type="number"
                           className="form-input"
-                          name="basicSalary"
-                          value={formData.basicSalary}
+                          name="monthlyCtc"
+                          value={formData.monthlyCtc}
                           onChange={handleInputChange}
                           required
                         />
@@ -1040,7 +1159,7 @@ const SalaryManagement = () => {
                     <div className="summary-table">
                       <div className="summary-table-row">
                         <span className="summary-table-label">Basic Salary:</span>
-                        <span className="summary-table-value">Rs.{basicSalary.toFixed(2)}</span>
+                        <span className="summary-table-value">Rs.{monthlyCtc.toFixed(2)}</span>
                       </div>
                       <div className="summary-table-row">
                         <span className="summary-table-label">Additional Earnings:</span>
@@ -1096,22 +1215,26 @@ const SalaryManagement = () => {
             <div className="modal-body">
               <div className="payslips-grid">
                 {selectedEmployeePayslips.length === 0 ? (
-                  <p className="text-muted" style={{textAlign: 'center', padding: '20px'}}>
-                    No payslips found for this employee.
-                  </p>
+                  <div className="payslips-empty">
+                    <h4>No Payslips Found</h4>
+                    <p>No payslips have been generated for this employee yet.</p>
+                  </div>
                 ) : (
                   selectedEmployeePayslips.map(payslip => (
                     <div key={payslip._id} className="payslip-card">
-                      <div className="payslip-info">
+                      <div className="payslip-header">
                         <div className="payslip-period">
                           {payslip.month} {payslip.year}
                         </div>
-                        <div className="payslip-amount">
-                          Rs.{payslip.netPay}
+                        <div className="payslip-amount currency">
+                          Rs.{payslip.netPay?.toFixed(2)}
                         </div>
+                      </div>
+                      <div className="payslip-details">
                         <div className="payslip-date">
                           Generated: {new Date(payslip.createdAt).toLocaleDateString()}
                         </div>
+                        <span className="payslip-status">Generated</span>
                       </div>
                       <div className="payslip-actions">
                         <button

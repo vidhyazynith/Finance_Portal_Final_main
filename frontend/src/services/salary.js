@@ -65,6 +65,24 @@ export const salaryService = {
       responseType: 'blob'
     });
     return response.data;
-  }
+  },
+
+  // Get disabled salary records
+    async getEmployeeDisabledSalaries(employeeId) {
+        const response = await api.get(`/salaries/employee/${employeeId}/disabled`);
+        return response.data;
+    },
+
+    // Get all disabled salary records
+    async getDisabledSalaries() {
+        const response = await api.get(`/salaries/disabled`);
+        return response.data;
+    },
+
+    // Apply hike to salary
+    async applyHike(salaryId, hikeData) {
+        const response = await api.post(`/salaries/${salaryId}/apply-hike`, hikeData);
+        return response.data;
+    }
 
 };

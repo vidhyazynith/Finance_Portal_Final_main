@@ -15,6 +15,7 @@ import companyRoutes from './routes/companyRoutes.js';
 //import Phot from "./routes/upload.js";
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { startHikeCronJob } from './services/cronService.js';
 
 
 dotenv.config();
@@ -71,5 +72,8 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`${MongoDB}`);
 });
+
+// After database connection
+startHikeCronJob();
 
 export default app;

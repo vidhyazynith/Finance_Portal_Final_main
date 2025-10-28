@@ -35,7 +35,7 @@ const payslipSchema = new mongoose.Schema({
     type: Date, 
     required: true 
   },
-  basicSalary: { 
+  monthlyCtc: { 
     type: Number, 
     required: true 
   },
