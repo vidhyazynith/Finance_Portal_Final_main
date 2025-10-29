@@ -4,8 +4,9 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon server.js"
+    "dev": "node server.js",
+    "test:hike": "node testHikeFunctionality.js",
+    "test:hike-manual": "node -e \"import('./testHikeFunctionality.js').then(mod => mod.default())\""
   },
   "keywords": [],
   "author": "",

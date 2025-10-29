@@ -15,8 +15,8 @@ import companyRoutes from './routes/companyRoutes.js';
 //import Phot from "./routes/upload.js";
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { startHikeCronJob } from './services/cronService.js';
-
+import { startHikeCronJob  } from './services/cronService.js';
+import Salary from './models/Salary.js'; // Import Salary model for manual trigger
 
 dotenv.config();
 
@@ -55,6 +55,56 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({ message: 'Server is running!' });
 });
 
+// Manual trigger endpoint for testing hike updates
+app.post('/api/test-hike-updates', async (req, res) => {
+  try {
+    console.log('🔄 Manual trigger: Checking for salary hike status updates...');
+    
+    /** @type {{activated: number, disabled: number}} */
+    const result = await Salary.processHikeStatusUpdates();
+    
+    res.json({
+      message: 'Hike status updates processed manually',
+      result: result
+    });
+  } catch (error) {
+    console.error('❌ Error in manual trigger:', error);
+    res.status(500).json({ 
+      message: 'Error processing hike updates',
+      error: error.message 
+    });
+  }
+});
+
+// Get hike status info endpoint
+app.get('/api/hike-status-info', async (req, res) => {
+  try {
+    const pendingHikes = await Salary.find({
+      activeStatus: 'disabled',
+      'hike.applied': true,
+      'hike.startDate': { $gt: new Date() }
+    }).select('employeeId name hike.startDate monthlyCtc');
+
+    const activatableHikes = await Salary.find({
+      activeStatus: 'disabled',
+      'hike.applied': true,
+      'hike.startDate': { $lte: new Date() }
+    }).select('employeeId name hike.startDate monthlyCtc');
+
+    res.json({
+      pendingHikes: pendingHikes,
+      activatableHikes: activatableHikes,
+      currentTime: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error fetching hike status info:', error);
+    res.status(500).json({ 
+      message: 'Error fetching hike status info',
+      error: error.message 
+    });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -63,7 +113,11 @@ app.use((err, req, res, next) => {
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ Connected to MongoDB'))
+  .then(() =>{ console.log('✅ Connected to MongoDB');
+  // Start the cron job after successful database connection
+    startHikeCronJob();
+    //startMonthlyUpdateCronJob (); 
+    })
   .catch((error) => console.error('❌ MongoDB connection error:', error));
 
 const PORT = process.env.PORT || 5000;
@@ -72,8 +126,5 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`${MongoDB}`);
 });
-
-// After database connection
-startHikeCronJob();
 
 export default app;
